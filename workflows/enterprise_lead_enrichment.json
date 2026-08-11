@@ -1,0 +1,86 @@
+{
+  "name": "NexusOps AI Lead Enrichment & Laravel Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nexus/webhook/leads",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Laravel Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "url": "={{ $json.body.enrichment_url }}",
+        "options": {}
+      },
+      "name": "Fetch External Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.all();\nreturn inputData.map(item => {\n  return {\n    json: {\n      score: item.json.employees > 50 ? 95 : 60,\n      enriched_status: 'completed',\n      verified_at: new Date().toISOString()\n    }\n  };\n});"
+      },
+      "name": "AI Scoring & Transform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.nexusops.test/v1/leads/callback",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"lead_id\": \"{{ $('Laravel Webhook Trigger').item.json.body.lead_id }}\",\n  \"score\": \"{{ $json.score }}\",\n  \"status\": \"{{ $json.enriched_status }}\",\n  \"verified_at\": \"{{ $json.verified_at }}\"\n}",
+        "options": {}
+      },
+      "name": "Callback to Laravel Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [910, 300]
+    }
+  ],
+  "connections": {
+    "Laravel Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch External Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch External Data": {
+      "main": [
+        [
+          {
+            "node": "AI Scoring & Transform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Scoring & Transform": {
+      "main": [
+        [
+          {
+            "node": "Callback to Laravel Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
