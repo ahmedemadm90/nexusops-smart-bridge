@@ -1,86 +1,93 @@
 {
-  "name": "NexusOps AI Lead Enrichment & Laravel Sync",
+  "name": "NexusOps - Enterprise Lead Enrichment",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "nexus/webhook/leads",
+        "path": "nexus/lead-enrichment",
         "responseMode": "responseNode",
         "options": {}
       },
-      "name": "Laravel Webhook Trigger",
+      "id": "1",
+      "name": "Laravel Trigger",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
-      "position": [250, 300]
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "nexus-lead-enrichment"
     },
     {
       "parameters": {
-        "operation": "get",
-        "url": "={{ $json.body.enrichment_url }}",
-        "options": {}
+        "jsCode": "const input = $json;\nconst lead = input.lead ?? {};\nconst email = String(lead.email ?? '').toLowerCase();\nconst company = String(lead.company ?? '').trim();\nconst website = String(lead.website ?? '').trim();\nconst corporateDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com'];\nconst domain = email.includes('@') ? email.split('@')[1] : '';\nconst businessEmail = domain && !corporateDomains.includes(domain);\nconst score = Math.min(100, (businessEmail ? 35 : 15) + (company ? 25 : 0) + (website ? 25 : 0) + (lead.name ? 15 : 0));\nreturn [{ json: {\n  run_id: input.idempotency_key,\n  lead_id: lead.id,\n  score,\n  status: 'completed',\n  enrichment: {\n    email_domain: domain || null,\n    is_business_email: businessEmail,\n    company_present: Boolean(company),\n    website_present: Boolean(website),\n    qualification: score >= 75 ? 'hot' : score >= 50 ? 'warm' : 'cold',\n    ruleset: 'lead-enrichment-v1'\n  },\n  verified_at: new Date().toISOString(),\n  callback: input.callback\n} }];"
       },
-      "name": "Fetch External Data",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [470, 300]
-    },
-    {
-      "parameters": {
-        "jsCode": "const inputData = $input.all();\nreturn inputData.map(item => {\n  return {\n    json: {\n      score: item.json.employees > 50 ? 95 : 60,\n      enriched_status: 'completed',\n      verified_at: new Date().toISOString()\n    }\n  };\n});"
-      },
-      "name": "AI Scoring & Transform",
+      "id": "2",
+      "name": "Score and Enrich Lead",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [690, 300]
+      "position": [500, 300]
     },
     {
       "parameters": {
-        "url": "https://api.nexusops.test/v1/leads/callback",
         "method": "POST",
+        "url": "={{ $json.callback.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-NexusOps-Secret",
+              "value": "={{ $json.callback.secret }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"lead_id\": \"{{ $('Laravel Webhook Trigger').item.json.body.lead_id }}\",\n  \"score\": \"{{ $json.score }}\",\n  \"status\": \"{{ $json.enriched_status }}\",\n  \"verified_at\": \"{{ $json.verified_at }}\"\n}",
+        "jsonBody": "={{ { run_id: $json.run_id, lead_id: $json.lead_id, score: $json.score, status: $json.status, enrichment: $json.enrichment, verified_at: $json.verified_at } }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "3",
+      "name": "Callback Laravel Control Plane",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { accepted: true, run_id: $('Score and Enrich Lead').item.json.run_id, lead_id: $('Score and Enrich Lead').item.json.lead_id, status: 'completed' } }}",
         "options": {}
       },
-      "name": "Callback to Laravel Backend",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [910, 300]
+      "id": "4",
+      "name": "Respond to Laravel",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1020, 300]
     }
   ],
   "connections": {
-    "Laravel Webhook Trigger": {
-      "main": [
-        [
-          {
-            "node": "Fetch External Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Laravel Trigger": {
+      "main": [[{"node": "Score and Enrich Lead", "type": "main", "index": 0}]]
     },
-    "Fetch External Data": {
-      "main": [
-        [
-          {
-            "node": "AI Scoring & Transform",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Score and Enrich Lead": {
+      "main": [[{"node": "Callback Laravel Control Plane", "type": "main", "index": 0}]]
     },
-    "AI Scoring & Transform": {
-      "main": [
-        [
-          {
-            "node": "Callback to Laravel Backend",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Callback Laravel Control Plane": {
+      "main": [[{"node": "Respond to Laravel", "type": "main", "index": 0}]]
     }
-  }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "versionId": "nexusops-lead-enrichment-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
 }
